@@ -1,0 +1,188 @@
+"""
+Keep model implementations in here.
+
+This file is where you will write most of your code!
+"""
+
+import numpy as np
+import math
+
+class RegressionTree(object):
+    def __init__(self, nfeatures, max_depth):
+        self.num_features = nfeatures
+        self.max_depth = max_depth
+        self.root = None
+
+    class Node:
+        def __init__(self, th, feat):
+            self.threshold = th
+            self.feature = feat
+            self.left = None
+            self.right = None
+            self.leaf = 0
+            
+    class Leaf:
+        def __init__(self, predict):
+            self.prediction = predict
+            self.leaf = 1
+
+    def split_array_at(self, X, y, val, feat):
+        left_b = X[:,feat] < val
+        right_b = X[:,feat] >= val
+        left_X = X[left_b,:]
+        left_y = y[left_b]
+        right_X = X[right_b,:]
+        right_y = y[right_b]
+
+        return left_X, left_y, right_X, right_y
+            
+    def calc_score(self, y_left, y_right):
+        if (y_left.shape[0] == 0 or y_right.shape[0] == 0):
+            return math.inf
+        total_sum = 0
+        left_mean = np.ones(y_left.shape[0]) * np.mean(y_left)
+        right_mean = np.ones(y_right.shape[0]) * np.mean(y_right)
+
+        total_sum += np.sum(np.power(y_left - left_mean, 2))
+        total_sum += np.sum(np.power(y_right - right_mean, 2))
+        return total_sum
+
+    def create_tree(self, X, y, depth):
+        num_examples = X.shape[0]
+        if (depth == self.max_depth or num_examples <= 1):
+            return self.Leaf(np.mean(y))
+
+        temp = 1
+        for i in range(self.num_features):
+            if (np.var(X[:,i]) !=  0):
+                temp = 0
+                break
+        if (temp):
+            return self.Leaf(np.mean(y))
+        
+        feature_scores = np.zeros(self.num_features)
+        feature_thresholds = np.zeros(self.num_features)
+        for j in range(self.num_features):
+            split_scores = np.zeros(num_examples)
+            split_threshold = np.zeros(num_examples)
+            for i in range(num_examples):
+                if X[i,j] not in split_threshold:
+                    split_threshold[i] = X[i,j] 
+                    ltemp_X, ltemp_y, rtemp_X, rtemp_y = self.split_array_at(X, y, split_threshold[i], j)
+                    split_scores[i] = self.calc_score(ltemp_y, rtemp_y)
+                else:
+                    split_threshold[i] = X[i,j]
+                    split_scores[i] = math.inf
+            feature_scores[j] = min(split_scores)
+            feature_thresholds[j] = split_threshold[np.argmin(split_scores)]
+        best_feature = np.argmin(feature_scores)
+        theta = feature_thresholds[best_feature]
+        treeroot = self.Node(theta, best_feature)
+
+        left_X, left_y, right_X, right_y = self.split_array_at(X, y, theta, best_feature)
+
+        treeroot.left = self.create_tree(left_X, left_y, depth + 1)
+        treeroot.right = self.create_tree(right_X, right_y, depth + 1)
+        return treeroot
+
+    def fit(self, *, X, y):
+        """ Fit the model.
+                Args:
+                X: A of floats with shape [num_examples, num_features].
+                y: An array of floats with shape [num_examples].
+                max_depth: An int representing the maximum depth of the tree
+        """
+        self.root = self.create_tree(X, y, 0)
+    
+    
+    def predict(self, X):
+        """ Predict.
+        Args:
+                X: A  matrix of floats with shape [num_examples, num_features].
+
+        Returns:
+                An array of floats with shape [num_examples].
+        """
+        num_examples = X.shape[0]
+        y = np.zeros(num_examples)
+        pointer = self.root
+        if (pointer == None):
+            raise ModelError('Need to train the model')
+        for i in range(num_examples):
+            while (not pointer.leaf):
+                if (X[i,int(pointer.feature)] < pointer.threshold):
+                    pointer = pointer.left
+                else:
+                    pointer = pointer.right
+            y[i] = pointer.prediction
+            pointer = self.root
+        return y
+
+
+class GradientBoostedRegressionTree(object):
+    def __init__(self, nfeatures, max_depth, n_estimators, regularization_parameter):
+        self.num_features = nfeatures
+        self.max_depth = max_depth
+        self.n_estimators = n_estimators
+        self.regularization_parameter = regularization_parameter
+        self.model_head = None
+        
+    class Model:
+        def __init__(self, prev):
+            self.prev = prev
+            self.func = None
+            
+        def predict(self, X, reg_param):
+            num_examples = X.shape[0]
+            y = np.zeros(num_examples)
+            
+            temp = self
+            while (temp.prev != None):
+                y += reg_param * temp.func.predict(X)
+                temp = temp.prev
+            y += temp.func
+            return y
+
+    def create_model(self, tree, prev):
+        new_model = self.Model(prev)
+        new_model.func = tree
+        return new_model
+    
+    def fit(self, *, X, y):
+        """ Fit the model.
+                Args:
+                X: A of floats with shape [num_examples, num_features].
+                y: An array of floats with shape [num_examples].
+                max_depth: An int representing the maximum depth of the tree
+                n_estimators: An int representing the number of regression trees to iteratively fit
+        """
+        
+        num_examples = X.shape[0]
+        curr_model = self.Model(None)
+        curr_model.func = np.mean(y)
+        
+        for i in range(self.n_estimators):
+            y_predicts = curr_model.predict(X, self.regularization_parameter)
+            residuals = y - y_predicts
+
+            reg_tree = RegressionTree(self.num_features, self.max_depth)
+            reg_tree.fit(X=X, y=residuals)
+
+            next_model = self.create_model(reg_tree, curr_model)
+            curr_model = next_model
+            
+        self.model_head = curr_model
+        
+    def predict(self, X):
+        """ Predict.
+        Args:
+                X: A  matrix of floats with shape [num_examples, num_features].
+
+        Returns:
+                An array of floats with shape [num_examples].
+        """
+
+        
+        return self.model_head.predict(X, self.regularization_parameter)
+        
+        

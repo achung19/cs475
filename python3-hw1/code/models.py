@@ -1,0 +1,206 @@
+""" 
+Keep model implementations in here.
+
+This file is where you will write most of your code!
+"""
+
+import numpy as np
+import sys
+from scipy.sparse import csr_matrix
+
+class Model(object):
+    """ Abstract model object.
+
+    Contains a helper function which can help with some of our datasets.
+    """
+
+    def __init__(self, nfeatures):
+        self.num_input_features = nfeatures
+
+    def fit(self, *, X, y, lr):
+        """ Fit the model.
+
+        Args:
+            X: A compressed sparse row matrix of floats with shape
+                [num_examples, num_features].
+            y: A dense array of ints with shape [num_examples].
+            lr: A float, the learning rate of this fit step.
+        """
+        raise NotImplementedError()
+
+    def predict(self, X):
+        """ Predict.
+
+        Args:
+            X: A compressed sparse row matrix of floats with shape
+                [num_examples, num_features].
+
+        Returns:
+            A dense array of ints with shape [num_examples].
+        """
+        raise NotImplementedError()
+
+    def _fix_test_feats(self, X):
+        """ Fixes some feature disparities between datasets.
+        Call this before you perform inference to make sure your X features
+        match your weights.
+        """
+        num_examples, num_input_features = X.shape
+        if num_input_features < self.num_input_features:
+            X = X.copy()
+            X._shape = (num_examples, self.num_input_features)
+        if num_input_features > self.num_input_features:
+            X = X[:, :self.num_input_features]
+        return X
+
+
+class MCModel(Model):
+    """ A multiclass model abstraction.
+    It wants to know, up front:
+        - How many features in the data
+        - How many classes in the data
+    """
+
+    def __init__(self, *, nfeatures, nclasses):
+        super().__init__(nfeatures)
+        self.num_classes = nclasses
+
+
+class MCPerceptron(MCModel):
+
+    # num_input_features = num features
+    # num_classes = num classes
+    def __init__(self, *, nfeatures, nclasses):
+        super().__init__(nfeatures=nfeatures, nclasses=nclasses)
+        self.W = np.zeros((nclasses, nfeatures), dtype=np.float)
+
+    # num_examples = num examples
+    def fit(self, *, X, y, lr):
+        X_mat = X.toarray()
+        num_examples = X_mat.shape[0]
+        for i in range(num_examples):
+            y_h = self.predict(X[i,:])
+            if (y[i] != y_h):
+                for j in range(self.num_input_features):
+                    self.W[y[i],j] += lr * X_mat[i,j]
+                    self.W[int(y_h),j] -= lr * X_mat[i,j]
+ 
+    #num_examples = num examples
+    def predict(self, X):
+        X = self._fix_test_feats(X)
+        X_mat = X.toarray()
+        num_examples = X_mat.shape[0]
+        scores = np.zeros(self.num_classes)
+        y_h = np.zeros(num_examples)
+        for i in range(num_examples):
+            for j in range(self.num_classes):
+                scores[j] = np.dot(self.W[j,:],X_mat[i,:])
+            y_h[i] = np.argmax(scores)
+        return y_h
+
+    #num_examples = num examples
+    def score_max(self, X):
+        X = self._fix_test_feats(X)
+        X_mat = X.toarray()
+        num_examples = X_mat.shape[0]
+        scores = np.zeros(self.num_classes)
+        y_h = np.zeros(num_examples)
+        for i in range(num_examples):
+            for j in range(self.num_classes):
+                scores[j] = np.dot(self.W[j,:],X_mat[i,:])
+            y_h[i] = max(scores)
+        return y_h
+
+
+class MCLogistic(MCModel):
+
+    # num_input_features = num features
+    # num_classes = num classes
+    def __init__(self, *, nfeatures, nclasses):
+        super().__init__(nfeatures=nfeatures, nclasses=nclasses)
+        self.W = np.zeros((nclasses, nfeatures), dtype=np.float)
+
+    # num_examples = num examplse
+    def fit(self, *, X, y, lr):
+        X_mat = X.toarray()
+        num_examples = X_mat.shape[0]
+        for i in range(num_examples):
+            y_h = self.predict(X[i,:])
+            logits = np.zeros(self.num_classes)
+            for j in range(self.num_classes):
+                logits[j] = np.dot(self.W[j,:],X_mat[i,:])
+            prob_dist = self.softmax(logits)
+            for k in range(self.num_classes):
+                if (k == y[i]):
+                    gradient = X_mat[i,:]-prob_dist[k]*X_mat[i,:]
+                else:
+                    gradient = np.zeros(self.num_input_features)-prob_dist[k]*X_mat[i,:]
+                self.W[k,:] += lr*gradient
+
+    # num_examples = num examples
+    def predict(self, X):
+        X = self._fix_test_feats(X)
+        X_mat = X.toarray()
+        num_examples = X_mat.shape[0]
+        scores = np.zeros(self.num_classes)
+        y_h = np.zeros(num_examples)
+        for i in range(num_examples):
+            for j in range(self.num_classes):
+                scores[j] = np.dot(self.W[j,:],X_mat[i,:])
+                y_h[i] = np.argmax(scores)
+        return y_h
+
+
+    # num_examples = num examples
+    def score_max(self, X):
+        X = self._fix_test_feats(X)
+        X_mat = X.toarray()
+        num_examples = X_mat.shape[0]
+        scores = np.zeros(self.num_classes)
+        y_h = np.zeros(num_examples)
+        for i in range(num_examples):
+            for j in range(self.num_classes):
+                scores[j] = np.dot(self.W[j,:],X_mat[i,:])
+                y_h[i] = max(scores)
+        return y_h
+
+    
+    def softmax(self, logits):
+        max_logits = np.ones(logits.shape[0]) * max(logits)
+        norm_logits = np.exp(logits - max_logits)
+        sum_logits = np.sum(norm_logits)
+        prob_dist = np.zeros(norm_logits.shape[0])
+        for i in range(logits.shape[0]):
+            prob_dist[i] = norm_logits[i]/sum_logits
+        return prob_dist
+
+
+class OneVsAll(Model):
+
+    def __init__(self, *, nfeatures, nclasses, model_class):
+        super().__init__(nfeatures)
+        self.num_classes = nclasses
+        self.model_class = model_class
+        self.models = [model_class(nfeatures=nfeatures, nclasses=2) for _ in range(nclasses)]
+
+    def fit(self, *, X, y, lr):
+        X_mat = X.toarray()
+        num_examples = X_mat.shape[0]
+        for i in range(num_examples):
+            for j in range(self.num_classes):
+                if (y[i] != j):
+                    self.models[j].fit(X=csr_matrix(X_mat[i,:]),y=np.asarray([0,1]),lr=lr)
+                else:
+                    self.models[j].fit(X=csr_matrix(X_mat[i,:]),y=np.asarray([1,0]),lr=lr)
+                    
+    def predict(self, X):
+        X = self._fix_test_feats(X)
+        X_mat = X.toarray()
+        num_examples = X.shape[0]
+        scores = np.ones(self.num_classes)
+        y_h = np.zeros(num_examples)
+        for i in range(num_examples):
+            for j in range(self.num_classes):
+                scores[j] = np.dot(X_mat[i,:],self.models[j].W[1,:])
+            y_h[i] = np.argmax(scores)
+        return y_h
